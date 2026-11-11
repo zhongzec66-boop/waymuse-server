@@ -1,6 +1,7 @@
 services:
-  api:
+  waymuse-api:
     build: .
+    container_name: waymuse-api
     restart: unless-stopped
     env_file: .env
     depends_on:
@@ -8,19 +9,38 @@ services:
         condition: service_healthy
       cache:
         condition: service_started
-    # 只绑本机：对外由服务器上已有的 Caddy 反代
+    mem_limit: 220m
+    networks:
+      - internal
+      - edge
+    # 本机调试用；对外由现有 Caddy 反代
     ports:
       - "127.0.0.1:8787:8787"
 
   db:
     image: postgres:16-alpine
+    container_name: waymuse-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-waymuse}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-waymuse}
       POSTGRES_DB: ${POSTGRES_DB:-waymuse}
+    # 小机器上把 Postgres 的内存压下来，避免和现有服务抢
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - max_connections=20
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+    mem_limit: 180m
     volumes:
       - db-data:/var/lib/postgresql/data
+    networks:
+      - internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-waymuse}"]
       interval: 5s
@@ -29,13 +49,23 @@ services:
 
   cache:
     image: redis:7-alpine
+    container_name: waymuse-cache
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes"]
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 48mb
+      - --maxmemory-policy
+      - allkeys-lru
+    mem_limit: 80m
     volumes:
       - cache-data:/data
+    networks:
+      - internal
 
-  # 服务器上已经有 Caddy 时不要启动这个（会抢 80/443）。
-  # 需要独立 Caddy 时：docker compose --profile with-caddy up -d
+  # 需要独立 Caddy 时才用：docker compose --profile with-caddy up -d
   caddy:
     profiles: ["with-caddy"]
     image: caddy:2-alpine
@@ -49,7 +79,15 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
-      - api
+      - waymuse-api
+
+networks:
+  internal:
+    name: waymuse-internal
+  # 复用现有 Caddy 所在的网络，让它可以按容器名反代过来
+  edge:
+    external: true
+    name: new-api_default
 
 volumes:
   db-data:
