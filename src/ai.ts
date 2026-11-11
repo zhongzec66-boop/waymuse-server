@@ -5,6 +5,7 @@ import { query } from "./db.ts";
 import { requireAuth } from "./auth.ts";
 import { checkQuota, estimateCostCents } from "./quota.ts";
 import { buildKbContext, gradeToGradYear, searchKb } from "./kb.ts";
+import { composeSystemPrompt } from "./prompts/index.ts";
 import type { Usage } from "./quota.ts";
 
 /**
@@ -247,6 +248,22 @@ export function registerAiRoutes(app: FastifyInstance) {
           )
           .min(1)
           .max(40),
+        useServerPrompt: z.boolean().optional(),
+        variables: z
+          .object({
+            today: z.string().max(500).optional(),
+            companion: z.string().max(2_000).optional(),
+            identity: z.string().max(8_000).optional(),
+            soul: z.string().max(8_000).optional(),
+            memory: z.string().max(8_000).optional(),
+            profile: z.string().max(4_000).optional(),
+            memories: z.array(z.string().max(500)).max(50).optional(),
+            courses: z.array(z.string().max(500)).max(50).optional(),
+            tasks: z.array(z.string().max(500)).max(50).optional(),
+            insights: z.string().max(4_000).optional(),
+            web: z.string().max(8_000).optional(),
+          })
+          .optional(),
         temperature: z.number().min(0).max(2).optional(),
         // flash 会先输出 reasoning_content，给太少正文就空了
         maxTokens: z.number().int().min(64).max(16_384).optional(),
@@ -254,6 +271,24 @@ export function registerAiRoutes(app: FastifyInstance) {
       .safeParse(request.body);
 
     if (!body.success) return reply.code(400).send({ error: "invalid_request" });
+
+    // 提示词模板在服务端拼：客户端只发变量。
+    // 老客户端没带 useServerPrompt，就用它自己发上来的 system prompt，行为不变。
+    let incoming = body.data.messages;
+    let skillId: string | null = null;
+    if (body.data.useServerPrompt) {
+      const lastUser = [...incoming]
+        .reverse()
+        .find((message) => message.role === "user");
+      const userText =
+        lastUser && typeof lastUser.content === "string" ? lastUser.content : "";
+      const composed = composeSystemPrompt(body.data.variables ?? {}, userText);
+      skillId = composed.skillId;
+      incoming = [
+        { role: "system" as const, content: composed.prompt },
+        ...incoming.filter((message) => message.role !== "system"),
+      ];
+    }
 
     const usage = await readUsage(claims.sub);
     const decision = checkQuota(
@@ -264,7 +299,7 @@ export function registerAiRoutes(app: FastifyInstance) {
         globalDailyCostCents: config.globalDailyCostCents,
       },
       // 先按输入长度给一个保守估计，实际以返回的 usage 为准
-      body.data.messages.reduce((sum, m) => sum + estimateInputTokens(m.content), 0),
+      incoming.reduce((sum: number, m: (typeof incoming)[number]) => sum + estimateInputTokens(m.content), 0),
     );
 
     if (!decision.allowed) {
@@ -276,7 +311,8 @@ export function registerAiRoutes(app: FastifyInstance) {
     }
 
     // 经验库注入：只给「要点」，不给原文，也不带任何人的标识
-    const { messages, kbCount, kbTags } = await withKnowledge(claims.sub, body.data.messages);
+    const { messages, kbCount, kbTags } = await withKnowledge(claims.sub, incoming);
+    if (skillId) reply.header("x-waymuse-skill", skillId);
 
     const upstream = await fetch(`${config.deepseek.baseUrl}/chat/completions`, {
       method: "POST",
