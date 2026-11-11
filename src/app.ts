@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import { registerAuthRoutes } from "./auth.ts";
 import { registerAiRoutes } from "./ai.ts";
+import { registerCourseRoutes } from "./course.ts";
 import { verifyMailer } from "./mailer.ts";
 import { pool } from "./db.ts";
 
@@ -43,6 +44,7 @@ export function buildApp(): FastifyInstance {
 
   registerAuthRoutes(app);
   registerAiRoutes(app);
+  registerCourseRoutes(app);
 
   app.setErrorHandler((error, request, reply) => {
     request.log.error({ err: error }, "unhandled");
