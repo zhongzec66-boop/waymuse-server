@@ -122,11 +122,11 @@ async function recordUsage(
 async function withKnowledge(
   userId: string,
   messages: ChatMessage[],
-): Promise<{ messages: ChatMessage[]; kbCount: number }> {
+): Promise<{ messages: ChatMessage[]; kbCount: number; kbTags: string[] }> {
   try {
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
     const question = lastUser ? textOf(lastUser.content) : "";
-    if (!question.trim()) return { messages, kbCount: 0 };
+    if (!question.trim()) return { messages, kbCount: 0, kbTags: [] };
 
     const profile = await query<{
       school: string;
@@ -152,7 +152,17 @@ async function withKnowledge(
     ).catch(() => undefined);
 
     const context = buildKbContext(entries);
-    if (!context) return { messages, kbCount: 0 };
+    if (!context) return { messages, kbCount: 0, kbTags: [] };
+
+    // 只带「专业 + 标签」这种不含个人信息的摘要，用于客户端展开「参考了什么」
+    const kbTags = [
+      ...new Set(
+        entries
+          .flatMap((entry) => [entry.major, ...entry.tags])
+          .map((tag) => tag.trim())
+          .filter(Boolean),
+      ),
+    ].slice(0, 8);
 
     const systemIndex = messages.findIndex((message) => message.role === "system");
     if (systemIndex >= 0) {
@@ -163,14 +173,15 @@ async function withKnowledge(
       } else {
         next.unshift({ role: "system", content: context });
       }
-      return { messages: next, kbCount: entries.length };
+      return { messages: next, kbCount: entries.length, kbTags };
     }
     return {
       messages: [{ role: "system", content: context }, ...messages],
       kbCount: entries.length,
+      kbTags,
     };
   } catch {
-    return { messages, kbCount: 0 };
+    return { messages, kbCount: 0, kbTags: [] };
   }
 }
 
@@ -265,7 +276,7 @@ export function registerAiRoutes(app: FastifyInstance) {
     }
 
     // 经验库注入：只给「要点」，不给原文，也不带任何人的标识
-    const { messages, kbCount } = await withKnowledge(claims.sub, body.data.messages);
+    const { messages, kbCount, kbTags } = await withKnowledge(claims.sub, body.data.messages);
 
     const upstream = await fetch(`${config.deepseek.baseUrl}/chat/completions`, {
       method: "POST",
@@ -295,7 +306,8 @@ export function registerAiRoutes(app: FastifyInstance) {
       "x-accel-buffering": "no",
       // 命中的学长经验条数，客户端用来显示「参考了 N 位同专业学长」
       "x-waymuse-kb": String(kbCount),
-      "access-control-expose-headers": "x-waymuse-kb",
+      "x-waymuse-kb-tags": encodeURIComponent(JSON.stringify(kbTags)),
+      "access-control-expose-headers": "x-waymuse-kb, x-waymuse-kb-tags",
       // reply.raw.writeHead 会绕过 Fastify 的 CORS 插件，
       // 这里必须手动补上，否则浏览器预检通过、真实请求仍被拦（ERR_FAILED）
       "access-control-allow-origin": request.headers.origin ?? "*",
