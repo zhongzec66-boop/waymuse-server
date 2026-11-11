@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import type { FastifyInstance } from "fastify";
+import cors from "@fastify/cors";
 import { registerAuthRoutes } from "./auth.ts";
 import { registerAiRoutes } from "./ai.ts";
 import { verifyMailer } from "./mailer.ts";
@@ -16,13 +17,13 @@ export function buildApp(): FastifyInstance {
     bodyLimit: 1_000_000,
   });
 
-  app.addHook("onRequest", async (request, reply) => {
-    reply.header("access-control-allow-origin", request.headers.origin ?? "*");
-    reply.header("access-control-allow-headers", "content-type, authorization");
-    reply.header("access-control-allow-methods", "GET, POST, OPTIONS");
-    if (request.method === "OPTIONS") {
-      reply.code(204).send();
-    }
+  // CORS 必须用插件：手写 onRequest 里 reply.send() 不会带上头
+  void app.register(cors, {
+    origin: true, // 回显请求来源；App 和本地调试都能用
+    credentials: false,
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["content-type", "authorization"],
+    maxAge: 600,
   });
 
   app.get("/health", async () => ({ ok: true, now: new Date().toISOString() }));

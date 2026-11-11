@@ -11,10 +11,22 @@ test("健康检查返回 200", async () => {
   await app.close();
 });
 
-test("OPTIONS 预检返回 204", async () => {
+test("OPTIONS 预检返回 204 并带 CORS 头", async () => {
   const app = buildApp();
-  const response = await app.inject({ method: "OPTIONS", url: "/api/auth/guest" });
+  const response = await app.inject({
+    method: "OPTIONS",
+    url: "/api/auth/guest",
+    headers: {
+      origin: "http://localhost:8128",
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type,authorization",
+    },
+  });
   assert.equal(response.statusCode, 204);
+  assert.equal(
+    response.headers["access-control-allow-origin"],
+    "http://localhost:8128",
+  );
   await app.close();
 });
 

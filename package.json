@@ -12,6 +12,7 @@
     "migrate": "node --experimental-strip-types src/migrate.ts"
   },
   "dependencies": {
+    "@fastify/cors": "^11.4.1",
     "fastify": "^5.2.0",
     "jose": "^5.9.6",
     "nodemailer": "^6.9.16",
