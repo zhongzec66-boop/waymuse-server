@@ -4,6 +4,7 @@ import { config } from "./config.ts";
 import { query } from "./db.ts";
 import { requireAuth } from "./auth.ts";
 import { checkQuota, estimateCostCents } from "./quota.ts";
+import { buildKbContext, gradeToGradYear, searchKb } from "./kb.ts";
 import type { Usage } from "./quota.ts";
 
 /**
@@ -83,6 +84,60 @@ async function recordUsage(
   );
 }
 
+/**
+ * 把学长的经验要点拼进 system prompt。
+ *
+ * 失败一律降级为「不注入」：经验库挂了不能影响聊天。
+ */
+async function withKnowledge(
+  userId: string,
+  messages: ChatMessage[],
+): Promise<ChatMessage[]> {
+  try {
+    const lastUser = [...messages].reverse().find((message) => message.role === "user");
+    if (!lastUser?.content.trim()) return messages;
+
+    const profile = await query<{
+      school: string;
+      major: string;
+      grade: string;
+    }>(
+      "select school, major, grade from profiles where user_id = $1",
+      [userId],
+    );
+    const row = profile.rows[0];
+
+    const entries = await searchKb({
+      question: lastUser.content,
+      school: row?.school,
+      major: row?.major,
+      gradYear: row?.grade ? gradeToGradYear(row.grade) : undefined,
+      limit: 4,
+    });
+
+    await query(
+      "insert into kb_query_log(user_id, query, matched) values ($1, $2, $3)",
+      [userId, lastUser.content.slice(0, 200), entries.length],
+    ).catch(() => undefined);
+
+    const context = buildKbContext(entries);
+    if (!context) return messages;
+
+    const systemIndex = messages.findIndex((message) => message.role === "system");
+    if (systemIndex >= 0) {
+      const next = [...messages];
+      next[systemIndex] = {
+        ...next[systemIndex]!,
+        content: `${next[systemIndex]!.content}\n\n${context}`,
+      };
+      return next;
+    }
+    return [{ role: "system", content: context }, ...messages];
+  } catch {
+    return messages;
+  }
+}
+
 export function registerAiRoutes(app: FastifyInstance) {
   app.get("/api/me/quota", async (request, reply) => {
     const claims = await requireAuth(request);
@@ -151,6 +206,9 @@ export function registerAiRoutes(app: FastifyInstance) {
       });
     }
 
+    // 经验库注入：只给「要点」，不给原文，也不带任何人的标识
+    const messages = await withKnowledge(claims.sub, body.data.messages);
+
     const upstream = await fetch(`${config.deepseek.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -159,7 +217,7 @@ export function registerAiRoutes(app: FastifyInstance) {
       },
       body: JSON.stringify({
         model: config.deepseek.model,
-        messages: body.data.messages,
+        messages,
         stream: true,
         stream_options: { include_usage: true },
         temperature: body.data.temperature ?? 0.7,
