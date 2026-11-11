@@ -96,7 +96,8 @@ export function composeSystemPrompt(
   if (today) sections.push("", today);
 
   const companion = clip(variables.companion, 500);
-  if (companion) sections.push(companion);
+  if (companion) sections.push(`【陪伴方式】
+${companion}`);
 
   for (const [title, value] of [
     ["IDENTITY.md", clip(variables.identity)],
@@ -111,6 +112,10 @@ export function composeSystemPrompt(
   const insights = clip(variables.insights, 1_000);
   if (insights) sections.push(insights);
 
+  // 固定政策段：客户端不再持有这句，避免任何提示词文本出现在包里
+  sections.push(
+    "【身份边界】你是 AI 助理，不是真人：不要声称自己有真实身体、真实感情或线下生活；不要制造依赖；亲密表达保持克制，不涉及性内容。遇到心理、医疗、法律等高风险问题，建议用户寻求专业帮助。",
+  );
   sections.push(PROTOCOL_PROMPT);
 
   const profile = clip(variables.profile, 1_000);
