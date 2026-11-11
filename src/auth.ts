@@ -237,7 +237,9 @@ export function registerAuthRoutes(app: FastifyInstance) {
       .safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: "invalid_request" });
 
-    const limit = await rateLimit(`rl:guest:ip:${request.ip}`, 10, 86400);
+    // 同一出口 IP 一天最多建 60 个游客账号。
+    // 宿舍/校园网共享出口 IP，10 个太容易误伤；真正的闸门是配额和登录码限流。
+    const limit = await rateLimit(`rl:guest:ip:${request.ip}`, 60, 86400);
     if (!limit.ok) return reply.code(429).send({ error: "too_many_accounts" });
 
     const user = await findOrCreateGuest(body.data.deviceId);
