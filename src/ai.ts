@@ -177,6 +177,11 @@ export function registerAiRoutes(app: FastifyInstance) {
       "cache-control": "no-store",
       connection: "keep-alive",
       "x-accel-buffering": "no",
+      // reply.raw.writeHead 会绕过 Fastify 的 CORS 插件，
+      // 这里必须手动补上，否则浏览器预检通过、真实请求仍被拦（ERR_FAILED）
+      "access-control-allow-origin": request.headers.origin ?? "*",
+      "access-control-allow-headers": "content-type, authorization",
+      vary: "Origin",
     });
 
     // Cloudflare 100 秒无数据会断，心跳兜底
