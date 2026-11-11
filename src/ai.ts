@@ -312,7 +312,7 @@ export function registerAiRoutes(app: FastifyInstance) {
 
     // 经验库注入：只给「要点」，不给原文，也不带任何人的标识
     const { messages, kbCount, kbTags } = await withKnowledge(claims.sub, incoming);
-    if (skillId) reply.header("x-waymuse-skill", skillId);
+
 
     const upstream = await fetch(`${config.deepseek.baseUrl}/chat/completions`, {
       method: "POST",
@@ -343,7 +343,10 @@ export function registerAiRoutes(app: FastifyInstance) {
       // 命中的学长经验条数，客户端用来显示「参考了 N 位同专业学长」
       "x-waymuse-kb": String(kbCount),
       "x-waymuse-kb-tags": encodeURIComponent(JSON.stringify(kbTags)),
-      "access-control-expose-headers": "x-waymuse-kb, x-waymuse-kb-tags",
+      // 命中的技能 id。必须写进 writeHead：reply.header() 会被 raw 绕过。
+      ...(skillId ? { "x-waymuse-skill": skillId } : {}),
+      "access-control-expose-headers":
+        "x-waymuse-kb, x-waymuse-kb-tags, x-waymuse-skill",
       // reply.raw.writeHead 会绕过 Fastify 的 CORS 插件，
       // 这里必须手动补上，否则浏览器预检通过、真实请求仍被拦（ERR_FAILED）
       "access-control-allow-origin": request.headers.origin ?? "*",
