@@ -36,6 +36,8 @@ export type ComposedPrompt = {
   prompt: string;
   /** 命中的技能 id，用于日志与排错 */
   skillId: string | null;
+  /** 技能的中文名：客户端只负责显示，不需要内置能力清单 */
+  skillName: string | null;
 };
 
 /** 单段变量上限：防止有人塞几十万字把上下文撑爆 */
@@ -130,7 +132,11 @@ export function composeSystemPrompt(
   const web = clip(variables.web);
   if (web) sections.push("", web);
 
-  return { prompt: sections.join("\n"), skillId: skill?.id ?? null };
+  return {
+    prompt: sections.join("\n"),
+    skillId: skill?.id ?? null,
+    skillName: skill?.name ?? null,
+  };
 }
 
 /** 供接口层校验：只允许这些变量名 */

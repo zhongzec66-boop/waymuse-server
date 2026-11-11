@@ -276,6 +276,7 @@ export function registerAiRoutes(app: FastifyInstance) {
     // 老客户端没带 useServerPrompt，就用它自己发上来的 system prompt，行为不变。
     let incoming = body.data.messages;
     let skillId: string | null = null;
+    let skillName: string | null = null;
     if (body.data.useServerPrompt) {
       const lastUser = [...incoming]
         .reverse()
@@ -284,6 +285,7 @@ export function registerAiRoutes(app: FastifyInstance) {
         lastUser && typeof lastUser.content === "string" ? lastUser.content : "";
       const composed = composeSystemPrompt(body.data.variables ?? {}, userText);
       skillId = composed.skillId;
+      skillName = composed.skillName;
       incoming = [
         { role: "system" as const, content: composed.prompt },
         ...incoming.filter((message) => message.role !== "system"),
@@ -345,8 +347,12 @@ export function registerAiRoutes(app: FastifyInstance) {
       "x-waymuse-kb-tags": encodeURIComponent(JSON.stringify(kbTags)),
       // 命中的技能 id。必须写进 writeHead：reply.header() 会被 raw 绕过。
       ...(skillId ? { "x-waymuse-skill": skillId } : {}),
+      // 客户端直接用这个名字显示「已启用：考试冲刺」，不需要内置对照表
+      ...(skillName
+        ? { "x-waymuse-skill-name": encodeURIComponent(skillName) }
+        : {}),
       "access-control-expose-headers":
-        "x-waymuse-kb, x-waymuse-kb-tags, x-waymuse-skill",
+        "x-waymuse-kb, x-waymuse-kb-tags, x-waymuse-skill, x-waymuse-skill-name",
       // reply.raw.writeHead 会绕过 Fastify 的 CORS 插件，
       // 这里必须手动补上，否则浏览器预检通过、真实请求仍被拦（ERR_FAILED）
       "access-control-allow-origin": request.headers.origin ?? "*",
