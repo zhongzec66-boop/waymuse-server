@@ -84,52 +84,64 @@ export function gradeToGradYear(grade: string, now = new Date()): number | undef
   return now.getFullYear() + years;
 }
 
+/** 问题里是否出现学生场景的领域词（考研/实习/竞赛…） */
+export function hasDomainTerm(question: string): boolean {
+  return LEXICON.some((word) => question.includes(word));
+}
+
 export async function searchKb(input: KbSearchInput): Promise<KbEntry[]> {
   const limit = Math.min(input.limit ?? 5, 10);
-  const keywords = extractKeywords(input.question);
+  const question = input.question.trim();
 
+  // 与学业/求职无关的问题不注入经验，避免把「考研经验」塞进「什么是二分查找」
+  if (!question || !hasDomainTerm(question)) return [];
+
+  const keywords = extractKeywords(question);
   const params: unknown[] = [];
-  const filters: string[] = ["visibility = 'public'"];
 
-  // 学校/专业精确匹配优先，但不强制（数据稀薄时也要能出结果）
   const school = input.school?.trim() ?? "";
   const major = input.major?.trim() ?? "";
   const gradYear = input.gradYear;
 
-  if (school) {
-    params.push(school);
-    filters.push(`(school = $${params.length} or school = '')`);
-  }
+  // 注意：学校和专业只用来「加权」，不做硬过滤。
+  // 每条经验带的是作者自己的学校，要求等于用户学校会把绝大多数条目直接排除。
+  const bonusParts: string[] = [];
   if (major) {
     params.push(major);
-    filters.push(`(major = $${params.length} or major = '')`);
+    bonusParts.push(`(case when major = $${params.length} then 4 else 0 end)`);
+  }
+  if (school) {
+    params.push(school);
+    bonusParts.push(`(case when school = $${params.length} then 3 else 0 end)`);
   }
   if (typeof gradYear === "number" && Number.isFinite(gradYear)) {
-    params.push(gradYear - 1, gradYear + 1);
-    filters.push(`(grad_year is null or grad_year between $${params.length - 1} and $${params.length})`);
+    params.push(gradYear);
+    bonusParts.push(
+      `(case when grad_year is not null and abs(grad_year - $${params.length}) <= 1 then 1 else 0 end)`,
+    );
   }
 
-  // 关键词：任一命中即可，用 similarity 排序
-  let scoreExpr = "0";
-  if (keywords.length) {
-    const scoreParts: string[] = [];
-    for (const word of keywords) {
-      params.push(`%${word}%`);
-      const idx = params.length;
-      scoreParts.push(
-        `(case when situation ilike $${idx} or approach ilike $${idx} or pitfalls ilike $${idx} then 1 else 0 end)`,
-      );
-    }
-    scoreExpr = scoreParts.join(" + ");
-    filters.push(`(${scoreExpr}) > 0`);
+  // 关键词命中数
+  const keywordParts: string[] = [];
+  for (const word of keywords) {
+    params.push(`%${word}%`);
+    const idx = params.length;
+    keywordParts.push(
+      `(case when situation ilike $${idx} or approach ilike $${idx} or pitfalls ilike $${idx} then 1 else 0 end)`,
+    );
   }
+
+  const bonusExpr = bonusParts.length ? bonusParts.join(" + ") : "0";
+  const keywordExpr = keywordParts.length ? keywordParts.join(" + ") : "0";
+  const scoreExpr = `(${bonusExpr} + ${keywordExpr})`;
 
   params.push(limit);
   const sql = `
     select id, school, major, grad_year, tags, situation, approach, outcome, pitfalls,
-           (${scoreExpr}) as score
+           ${scoreExpr} as score
       from kb_entries
-     where ${filters.join(" and ")}
+     where visibility = 'public'
+       and (${bonusExpr}) + (${keywordExpr}) > 0
      order by score desc, updated_at desc
      limit $${params.length}
   `;
