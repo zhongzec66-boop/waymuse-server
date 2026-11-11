@@ -92,10 +92,10 @@ async function recordUsage(
 async function withKnowledge(
   userId: string,
   messages: ChatMessage[],
-): Promise<ChatMessage[]> {
+): Promise<{ messages: ChatMessage[]; kbCount: number }> {
   try {
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
-    if (!lastUser?.content.trim()) return messages;
+    if (!lastUser?.content.trim()) return { messages, kbCount: 0 };
 
     const profile = await query<{
       school: string;
@@ -121,7 +121,7 @@ async function withKnowledge(
     ).catch(() => undefined);
 
     const context = buildKbContext(entries);
-    if (!context) return messages;
+    if (!context) return { messages, kbCount: 0 };
 
     const systemIndex = messages.findIndex((message) => message.role === "system");
     if (systemIndex >= 0) {
@@ -130,11 +130,14 @@ async function withKnowledge(
         ...next[systemIndex]!,
         content: `${next[systemIndex]!.content}\n\n${context}`,
       };
-      return next;
+      return { messages: next, kbCount: entries.length };
     }
-    return [{ role: "system", content: context }, ...messages];
+    return {
+      messages: [{ role: "system", content: context }, ...messages],
+      kbCount: entries.length,
+    };
   } catch {
-    return messages;
+    return { messages, kbCount: 0 };
   }
 }
 
@@ -207,7 +210,7 @@ export function registerAiRoutes(app: FastifyInstance) {
     }
 
     // 经验库注入：只给「要点」，不给原文，也不带任何人的标识
-    const messages = await withKnowledge(claims.sub, body.data.messages);
+    const { messages, kbCount } = await withKnowledge(claims.sub, body.data.messages);
 
     const upstream = await fetch(`${config.deepseek.baseUrl}/chat/completions`, {
       method: "POST",
@@ -235,6 +238,9 @@ export function registerAiRoutes(app: FastifyInstance) {
       "cache-control": "no-store",
       connection: "keep-alive",
       "x-accel-buffering": "no",
+      // 命中的学长经验条数，客户端用来显示「参考了 N 位同专业学长」
+      "x-waymuse-kb": String(kbCount),
+      "access-control-expose-headers": "x-waymuse-kb",
       // reply.raw.writeHead 会绕过 Fastify 的 CORS 插件，
       // 这里必须手动补上，否则浏览器预检通过、真实请求仍被拦（ERR_FAILED）
       "access-control-allow-origin": request.headers.origin ?? "*",
