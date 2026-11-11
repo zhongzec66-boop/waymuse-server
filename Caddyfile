@@ -1,0 +1,25 @@
+# 把 api.example.com 换成你的域名；Caddy 会自动申请证书。
+# 如果前面套了 Cloudflare（橙云），证书用 DNS 验证或直接开 CF 的 Full(strict)。
+
+api.waymuse.app {
+	encode zstd gzip
+
+	# SSE 不能被压缩/缓冲
+	@gzip {
+		not path /api/ai/*
+	}
+	encode @gzip zstd gzip
+
+	reverse_proxy api:8787 {
+		flush_interval -1
+		transport http {
+			read_timeout 300s
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+	}
+}
