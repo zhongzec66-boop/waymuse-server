@@ -87,7 +87,7 @@ networks:
   # 复用现有 Caddy 所在的网络，让它可以按容器名反代过来
   edge:
     external: true
-    name: new-api_default
+    name: new-api_new_api_network
 
 volumes:
   db-data:
