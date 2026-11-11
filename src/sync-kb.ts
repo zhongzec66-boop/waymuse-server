@@ -15,6 +15,8 @@ const env = (name: string, fallback = "") => (process.env[name] ?? fallback).tri
 
 const REST_URL = env("KB_REST_URL");
 const REST_KEY = env("KB_REST_KEY");
+/** 直连 PostgreSQL（公网地址 + 只读账号）；与 REST 二选一 */
+const PG_URL = env("KB_PG_URL");
 const TABLE = env("KB_TABLE", "experience_public_v2");
 const DRY_RUN = process.argv.includes("--dry-run");
 const limitIndex = process.argv.indexOf("--limit");
@@ -104,11 +106,31 @@ export function mapRow(row: Row): {
 }
 
 async function fetchRows(): Promise<Row[]> {
-  if (!REST_URL) throw new Error("缺少 KB_REST_URL");
+  const take = Math.min(LIMIT, 500);
+
+  // ① 直连 PostgreSQL（推荐：只读账号 + 公网地址 + 白名单）
+  if (PG_URL) {
+    const { Client } = await import("pg");
+    const client = new Client({ connectionString: PG_URL });
+    await client.connect();
+    try {
+      // 表名来自环境变量，做一次白名单校验，避免拼串注入
+      if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(TABLE)) {
+        throw new Error(`表名不合法：${TABLE}`);
+      }
+      const result = await client.query(`select * from ${TABLE} limit $1`, [take]);
+      return result.rows as Row[];
+    } finally {
+      await client.end();
+    }
+  }
+
+  // ② PostgREST
+  if (!REST_URL) throw new Error("缺少 KB_PG_URL 或 KB_REST_URL");
 
   const url = new URL(`${REST_URL.replace(/\/$/, "")}/${TABLE}`);
   url.searchParams.set("select", "*");
-  url.searchParams.set("limit", String(Math.min(LIMIT, 500)));
+  url.searchParams.set("limit", String(take));
 
   const response = await fetch(url, {
     headers: {
