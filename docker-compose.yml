@@ -1,4 +1,4 @@
-﻿services:
+services:
   api:
     build: .
     restart: unless-stopped
@@ -8,8 +8,9 @@
         condition: service_healthy
       cache:
         condition: service_started
-    expose:
-      - "8787"
+    # 只绑本机：对外由服务器上已有的 Caddy 反代
+    ports:
+      - "127.0.0.1:8787:8787"
 
   db:
     image: postgres:16-alpine
@@ -33,10 +34,13 @@
     volumes:
       - cache-data:/data
 
+  # 服务器上已经有 Caddy 时不要启动这个（会抢 80/443）。
+  # 需要独立 Caddy 时：docker compose --profile with-caddy up -d
   caddy:
+    profiles: ["with-caddy"]
     image: caddy:2-alpine
-    env_file: .env
     restart: unless-stopped
+    env_file: .env
     ports:
       - "80:80"
       - "443:443"
@@ -52,4 +56,3 @@ volumes:
   cache-data:
   caddy-data:
   caddy-config:
-

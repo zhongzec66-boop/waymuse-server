@@ -1,0 +1,30 @@
+# 把这段加到你服务器上已有的 Caddyfile 里（通常在 /etc/caddy/Caddyfile）。
+#
+# 两种情况二选一：
+#
+# A. 已经有域名（推荐）：
+#       api.waymuse.app {
+#           reverse_proxy 127.0.0.1:8787
+#       }
+#    然后把 DNS 的 api 记录指向 101.32.101.117。
+#
+# B. 还没有域名：用 sslip.io，自动解析到你的 IP
+#       api.101-32-101-117.sslip.io {
+#           reverse_proxy 127.0.0.1:8787
+#       }
+#
+# 改完执行：
+#   sudo systemctl reload caddy
+#   （如果 Caddy 跑在 Docker 里：docker restart <容器名>）
+#
+# SSE 注意事项：/api/ai/* 不能被压缩或缓冲，Caddy 默认对 SSE 是流式透传的，
+# 不要再加 encode 指令到这条路由上。
+
+api.101-32-101-117.sslip.io {
+	reverse_proxy 127.0.0.1:8787 {
+		flush_interval -1
+		transport http {
+			read_timeout 300s
+		}
+	}
+}
