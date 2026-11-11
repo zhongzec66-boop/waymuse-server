@@ -15,7 +15,37 @@ import type { Usage } from "./quota.ts";
  * 客户端据此回退到本地兜底。
  */
 
-type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
+type TextPart = { type: "text"; text: string };
+type ImagePart = { type: "image_url"; image_url: { url: string } };
+type ContentPart = TextPart | ImagePart;
+
+/** 纯文本用字符串；带图时用 OpenAI 兼容的块数组（deepseek-flash 支持 image_url） */
+type ChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string | ContentPart[];
+};
+
+/** 取出消息里的纯文本（用于检索与估算） */
+function textOf(content: string | ContentPart[]): string {
+  if (typeof content === "string") return content;
+  return content
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .join("\n")
+    .trim();
+}
+
+function imageCount(content: string | ContentPart[]): number {
+  if (typeof content === "string") return 0;
+  return content.filter((part) => part.type === "image_url").length;
+}
+
+/**
+ * 粗略估算输入 token：
+ * 文本按字符数，图片按 1500 token/张（约等于一张 1024×1024 的高清图）。
+ */
+function estimateInputTokens(content: string | ContentPart[]): number {
+  return textOf(content).length + imageCount(content) * 1500;
+}
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
@@ -95,7 +125,8 @@ async function withKnowledge(
 ): Promise<{ messages: ChatMessage[]; kbCount: number }> {
   try {
     const lastUser = [...messages].reverse().find((message) => message.role === "user");
-    if (!lastUser?.content.trim()) return { messages, kbCount: 0 };
+    const question = lastUser ? textOf(lastUser.content) : "";
+    if (!question.trim()) return { messages, kbCount: 0 };
 
     const profile = await query<{
       school: string;
@@ -108,7 +139,7 @@ async function withKnowledge(
     const row = profile.rows[0];
 
     const entries = await searchKb({
-      question: lastUser.content,
+      question,
       school: row?.school,
       major: row?.major,
       gradYear: row?.grade ? gradeToGradYear(row.grade) : undefined,
@@ -117,7 +148,7 @@ async function withKnowledge(
 
     await query(
       "insert into kb_query_log(user_id, query, matched) values ($1, $2, $3)",
-      [userId, lastUser.content.slice(0, 200), entries.length],
+      [userId, question.slice(0, 200), entries.length],
     ).catch(() => undefined);
 
     const context = buildKbContext(entries);
@@ -126,10 +157,12 @@ async function withKnowledge(
     const systemIndex = messages.findIndex((message) => message.role === "system");
     if (systemIndex >= 0) {
       const next = [...messages];
-      next[systemIndex] = {
-        ...next[systemIndex]!,
-        content: `${next[systemIndex]!.content}\n\n${context}`,
-      };
+      const current = next[systemIndex]!.content;
+      if (typeof current === "string") {
+        next[systemIndex] = { ...next[systemIndex]!, content: `${current}\n\n${context}` };
+      } else {
+        next.unshift({ role: "system", content: context });
+      }
       return { messages: next, kbCount: entries.length };
     }
     return {
@@ -177,13 +210,35 @@ export function registerAiRoutes(app: FastifyInstance) {
           .array(
             z.object({
               role: z.enum(["system", "user", "assistant"]),
-              content: z.string().min(1).max(40_000),
+              // 纯文本用字符串；带图片时用 OpenAI 兼容的 content 块数组
+              content: z.union([
+                z.string().min(1).max(40_000),
+                z
+                  .array(
+                    z.union([
+                      z.object({
+                        type: z.literal("text"),
+                        text: z.string().max(40_000),
+                      }),
+                      z.object({
+                        type: z.literal("image_url"),
+                        image_url: z.object({
+                          // data:image/... 或 http(s) 链接
+                          url: z.string().min(8).max(12_000_000),
+                        }),
+                      }),
+                    ]),
+                  )
+                  .min(1)
+                  .max(6),
+              ]),
             }),
           )
           .min(1)
           .max(40),
         temperature: z.number().min(0).max(2).optional(),
-        maxTokens: z.number().int().min(64).max(8192).optional(),
+        // flash 会先输出 reasoning_content，给太少正文就空了
+        maxTokens: z.number().int().min(64).max(16_384).optional(),
       })
       .safeParse(request.body);
 
@@ -198,7 +253,7 @@ export function registerAiRoutes(app: FastifyInstance) {
         globalDailyCostCents: config.globalDailyCostCents,
       },
       // 先按输入长度给一个保守估计，实际以返回的 usage 为准
-      body.data.messages.reduce((sum, m) => sum + m.content.length, 0),
+      body.data.messages.reduce((sum, m) => sum + estimateInputTokens(m.content), 0),
     );
 
     if (!decision.allowed) {
