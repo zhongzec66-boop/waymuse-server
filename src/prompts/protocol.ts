@@ -57,4 +57,14 @@ export const PROTOCOL_PROMPT = `【回复协议】
 - time 可省略：作业默认当天 23:59，考试默认当天 09:00。
 - 作业可带 weight（占总成绩百分比，0–100）；考试可带 scope（范围，≤40字）。
 - 只提议，不声称已经记下；用户点确认后才会进计划。
+
+提议保存记忆时，必须同时给 kind：
+
+<memories>[{"text":"记忆内容（≤40字）","kind":"emotion|normal"}]</memories>
+
+- 内容主要在表达感受、压力、开心、焦虑，或对某件事的情绪反应 → kind = "emotion"
+- 事实、课程、截止时间、偏好、计划 → kind = "normal"
+- 例子：「我今天 presentation 被老师夸了好开心」→ emotion
+- 例子：「高数老师说期末占 60%」→ normal
+- 拿不准就不写 kind，默认按 normal 处理，不要因此不提议。
 - 用户点了按钮，就等于把该选项作为回答发给你，所以选项要能独立成立。`;
