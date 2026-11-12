@@ -56,6 +56,21 @@ export const config = {
     /** 本地开发可以关掉，线上必须开着 */
     required: str("TURNSTILE_REQUIRED", "1") !== "0",
   },
+
+  breeze: {
+    baseUrl: str("BREEZE_BASE_URL", "https://api.breeze.blue"),
+    apiKey: str("BREEZE_API_KEY"),
+    /** 默认音色：青葱电台 */
+    voiceId: str("BREEZE_VOICE_ID", "voc_rgr8satyqpwh"),
+    model: str("BREEZE_MODEL", "breeze-tts-2-multilingual"),
+    languageCode: str("BREEZE_LANGUAGE", "zh"),
+    cacheDir: str("TTS_CACHE_DIR", "/app/voice-cache"),
+    cacheMaxMb: num("TTS_CACHE_MAX_MB", 500),
+    dailyChars: num("TTS_DAILY_CHARS", 8000),
+    monthlyChars: num("TTS_MONTHLY_CHARS", 150000),
+    maxCharsPerRequest: num("TTS_MAX_CHARS_PER_REQUEST", 600),
+    timeoutMs: num("TTS_TIMEOUT_MS", 20_000),
+  },
 } as const;
 
 export function assertProductionConfig(): string[] {
